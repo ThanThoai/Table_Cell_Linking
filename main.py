@@ -191,7 +191,7 @@ class Table(object):
             4 : "table_projected_row_header",
             5 : "table_spanning_cell"
         }
-        self.metadata, self.header = self.__get_metadata()
+        self.metadata, self.header, self.table = self.__get_metadata()
         self.matrix = np.zeros(shape = (IDX + 1, IDX + 1))
 
 
@@ -224,6 +224,7 @@ class Table(object):
         idx = 0
         metadata = []
         header = []
+        table = None
         text_id = 0
         for cell in cells:
             flag = True
@@ -258,9 +259,12 @@ class Table(object):
                 re = [rows[int(box.ymin)], rows[int(box.ymax)], cols[int(box.xmin)], cols[int(box.xmax)]]
                 header.append(RelativeBox((re)))
             
+            if label in ['table']:
+                table = box
+            
             idx += 1
         # print(len(metadata))
-        return metadata, header
+        return metadata, header, table
 
 
     def get_id_header(self):
@@ -363,33 +367,68 @@ class Table(object):
         self.create_link_cell_with_header()
         self.create_link_cell_to_project()
 
-def gen_annotations(table):
+def gen_annotations(table, ocrs):
     documents = []
     h, w = np.shape(table.matrix)[:2]
     boxes_ocr = []
     for item in table.metadata:
+        label = "value"
+        if item.type != 'cell':
+            label = "header"
         for i in item.TBox.lines.values():
             boxes_ocr.append(
                 {
                     'box' : Box([i['box'].xmin, i['box'].ymin, i['box'].xmax, i['box'].ymax]),
                     'text' : i['text'],
-                    'id' : i['id']
+                    'id' : i['id'], 
+                    'label' : label
                 }
             )
     # print(boxes_ocr)
     # 1/0
+    idx = 0
     for ocr in boxes_ocr:
         temp = {
             "box" : [ocr['box'].xmin, ocr['box'].ymin, ocr['box'].xmax, ocr['box'].ymax],
             "text" : ocr['text'],
             "word" : [],
             "id" : ocr['id'],
+            "label" : ocr['label'],
             "linking" : []
         }
         for i in range(w):
             if table.matrix[ocr['id']][i] == 1:
-                temp['linking'].append([ocr['id'], i])
+                if ocr['id'] != i:
+                    temp['linking'].append([ocr['id'], i])
+        for ocr_ in ocrs.values():
+            if is_overlap(ocr['box'], ocr_['box'], threshold = 0.7):
+                temp['word'].append(
+                    {
+                        "box" : [ocr_['box'].xmin, ocr_['box'].ymin, ocr_['box'].xmax, ocr_['box'].ymax], 
+                        "text" : ocr_['text'],
+                    }
+                )
         documents.append(temp)
+        idx = ocr['id']
+    
+    for ocr in ocrs.values():
+        if not is_overlap(ocr['box'], table.table, threshold = 0.1):
+            idx += 1
+            temp = {
+                        "box" : [ocr['box'].xmin, ocr['box'].ymin, ocr['box'].xmax, ocr['box'].ymax],
+                        "text" : ocr['text'],
+                        "word" : [
+                            {
+                                "box" : [ocr['box'].xmin, ocr['box'].ymin, ocr['box'].xmax, ocr['box'].ymax], 
+                                "text" : ocr['text'],
+                            }
+                        ],
+                        "id" : idx,
+                        "label" : "other",
+                        "linking" : []
+                    }
+            documents.append(temp)
+
     return documents
 
 
@@ -422,15 +461,15 @@ def run(name, idx):
     boxes_element = read_file(label_path)
     table = Table(boxes_text, boxes_element)
     table.create_link()
-    anno = gen_annotations(table)
+    anno = gen_annotations(table, boxes_text)
     # print(anno)
 
     image = visualize(image, anno)
     cv2.imwrite(os.path.join("visualize", name + ".jpg"), image)
     temp = {
-        "id" : "%05d"%idx,
-        "document" : anno,
-        "image" : name
+        "id" : name,
+        "document" : anno
+        # "image" : name
     }     
     return temp
 
@@ -450,7 +489,7 @@ if __name__ == "__main__":
     }
 
     with open("log_30_3.txt", 'w') as wr:
-        for idx, name in tqdm.tqdm(enumerate(names)):
+        for idx, name in tqdm.tqdm(enumerate(names[:1800])):
             try:
                 anno = run(name, idx)
                 annotations['documents'].append(anno)
@@ -459,7 +498,7 @@ if __name__ == "__main__":
                 wr.write(f"{name}\t{err}")
                 print(err)
         # 1/0
-    with open("pubtable1m_entity_linking_v1.json", 'w') as f:
+    with open("pubtable1m_entity_linking_v1_train.json", 'w') as f:
         json.dump(annotations, f, ensure_ascii=False)
     
 
