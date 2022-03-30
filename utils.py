@@ -72,6 +72,15 @@ def xywh2xyxy(box):
     ymax = y + h / 2
     return [xmin, ymin, xmax, ymax]
 
+dict_label = {
+    0 : "table",
+    1 : "table_column",
+    2 : "table_row",
+    3 : "table_column_header",
+    4 : "table_projected_row_header",
+    5 : "table_spanning_cell"
+}
+
 def read_file(filename):
     img_path = filename.replace("labels", "images").split(".")[0] + ".jpg"
     _, h_img, w_img = read_img(img_path)
@@ -86,7 +95,7 @@ def read_file(filename):
         yc = float(d[2]) * h_img
         wc = float(d[3]) * w_img
         hc = float(d[4]) * h_img
-        result.append((Box(xywh2xyxy([xc, yc, wc, hc])), label))
+        result.append((Box(xywh2xyxy([xc, yc, wc, hc])), dict_label[label]))
     return result
 
 def getxyxy(box):
@@ -101,18 +110,22 @@ def getxyxy(box):
 
 def read_ocr(filename):
     with open(filename, 'r') as f:
-        data = json.load(f)['text']
+        data = json.load(f)
     result = {}
     for idx, d in enumerate(data):
         result[idx] = {
-            "bbox" : Box(bbox = getxyxy(d['bbox'])),
+            "box" : Box(bbox = d['bbox']),
             "text" : d['text'],
             "id" : idx
         }
     return result
 
 
+if __name__ == '__main__':
 
+    filename = 'ocr_labels/PMC6233401_table_3_words.json'
+    result = read_ocr(filename)
+    print(result)
 
     
 
