@@ -239,6 +239,8 @@ def run(name, idx):
     boxes_text = read_ocr(ocr_path)
     boxes_element = read_file(label_path)
 
+    print(boxes_element)
+
     table = Table(boxes_text, boxes_element)
     table.create_link()
     anno = gen_annotations(boxes_text, table.matrix)

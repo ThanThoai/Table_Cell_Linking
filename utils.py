@@ -125,7 +125,18 @@ if __name__ == '__main__':
 
     filename = 'ocr_labels/PMC6233401_table_3_words.json'
     result = read_ocr(filename)
-    print(result)
+    image = cv2.imread("images_table/PMC6233401_table_3.jpg")
+    h, w = image.shape[:2]
+    with open("PMC6233401_table_3.txt", 'w') as f:
+        for r in result.values():
+            xc = (r['box'].xmax + r['box'].xmin) / 2 / w
+            yc = (r['box'].ymax + r['box'].ymin) / 2 / h
+            wc = (r['box'].xmax - r['box'].xmin) / w
+            hc = (r['box'].ymax - r['box'].ymin) / h
+            if xc > 0 and yc > 0 and wc > 0 and hc > 0:
+                f.write(f"7 {xc} {yc} {wc} {hc}\n")
+    
+
 
     
 

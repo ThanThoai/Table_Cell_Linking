@@ -8,6 +8,7 @@ import os
 ROOT_IMG = "images_table"
 ROOT_LABEL = "labels_table"
 ROOT_OCR = "ocr_labels"
+IDX = 0
 
 class Box(object):
 
@@ -26,13 +27,13 @@ class Box(object):
 class RelativeBox(object):
 
     def __init__(self, relative_position):
-        self.start_row = relative_position[0]
-        self.end_row = relative_position[1]
-        self.start_col = relative_position[2]
-        self.end_col = relative_position[3]
-        self.num_grid = (self.end_row - self.start_row) * (self.end_col - self.start_col)
-        self.num_row = self.end_row - self.start_row
-        self.num_col = self.end_col - self.start_col
+        self.row_start = relative_position[0]
+        self.row_end = relative_position[1]
+        self.col_start = relative_position[2]
+        self.col_end = relative_position[3]
+        self.num_grid = (self.row_end - self.row_start) * (self.col_end - self.col_start)
+        self.num_row = self.row_end - self.row_start
+        self.num_col = self.col_end - self.col_start
 
 
 def is_on_same_line(box_a, box_b, min_y_overlap_ratio = 0.8):
@@ -58,8 +59,10 @@ def is_on_same_line(box_a, box_b, min_y_overlap_ratio = 0.8):
     return False
 
 def stitch_boxes_into_lines(boxes, max_x_dist = 10, min_y_overlap_ratio=0.8):
-    if len(boxes) <= 1:
-        return boxes
+    if len(boxes) == 1:
+        return [boxes]
+    elif len(boxes) == 0:
+        return []
     merged_boxes = []
     x_sorted_boxes = sorted(list(boxes.values()), key=lambda x: x['box'].xmin)
     skip_idx = set()
@@ -110,7 +113,7 @@ def stitch_boxes_into_lines(boxes, max_x_dist = 10, min_y_overlap_ratio=0.8):
             merged_box['box'] = Box([xmin, ymin, xmax, ymax])
             merged_boxes.append(merged_box)
 
-    return merged_box
+    return merged_boxes
             
 
 
@@ -118,34 +121,49 @@ class TextBox(object):
 
     def __init__(self, texts : List, idx : int):
         self.lines = self.get_line(texts, idx)
+        if len(self.lines) == 0:
+            self.id = None
+            self.relative_id = []
+        else:
+            self.id = self.lines['line-0']['id']
+            self.relative_id = [self.lines[key]['id'] for key in self.lines if key != "line-0"]
 
     def get_line(self, texts : List, idx : int) -> Dict:
         lines = {}
-        if len(texts) == 1:
-            lines['line-0'] = {
-                "box" : texts[0]['box'],
-                "text" : texts['text'],
-                "id" : idx + 1
-            }
-            self.id = idx + 1
-            self.relative_id = []
-
+        global IDX
+        if len(texts) == 0:
+            return lines
         else:
-            self.relative_id = []
-            merged_boxes = stitch_boxes_into_lines(texts)
-            print(merged_boxes)
-            merged_boxes = sorted(merged_boxes, key = lambda x : x['box'].xmin)
-            for i, merged_box in merged_boxes:
-                lines[f"line-{idx}"] = {
-                    "box" : merged_box['box'],
-                    "text" : merged_box['text'],
-                    "id" : idx + 1 + i
+            # print(texts)
+            texts = {k : v for k, v in sorted(texts.items(), key=lambda x : x[1]['box'].xmin)}
+            box_lines = []
+            set_idx = set()
+            for i in texts:
+                if i in set_idx:
+                    continue
+                line = [texts[i]]
+                set_idx.add(i)
+                for j in texts:
+                    if j in set_idx:
+                        continue
+                    if with_line(texts[i]['box'], texts[j]['box']):
+                        line.append(texts[j])
+                        set_idx.add(j)
+                box_lines.append(line)
+            for idx, line in enumerate(box_lines):
+                line = sorted(line, key = lambda x : x['box'].xmin)
+                xmin = min([i['box'].xmin for i in line])
+                xmax = max([i['box'].xmax for i in line])
+                ymin = min([i['box'].ymin for i in line])
+                ymax = max([i['box'].ymax for i in line])
+                text = " ".join([i['text'] for i in line])
+                lines[f'line-{idx}'] = {
+                    "text" : text,
+                    "box" : Box([xmin, ymin, xmax, ymax]),
+                    "id" : IDX
                 }
-                if i == 0:
-                    self.id = idx + 1
-                else:
-                    self.relative_id.append(idx + 1 + i)
-        return lines
+                IDX += 1
+            return lines
 
     
 class Cell(object):
@@ -164,7 +182,7 @@ class Table(object):
     def __init__(self, boxes_text, boxes_element):
         self.boxes_text = boxes_text
         self.boxes_element = boxes_element
-
+        global IDX
         self.label = {
             0 : "table",
             1 : "table_column",
@@ -174,13 +192,13 @@ class Table(object):
             5 : "table_spanning_cell"
         }
         self.metadata, self.header = self.__get_metadata()
-        self.matrix = np.zeros(shape = (len(boxes_text), len(boxes_text)))
+        self.matrix = np.zeros(shape = (IDX + 1, IDX + 1))
 
 
     def get_box_text_in(self, box):
         result = {}
         for key, value in self.boxes_text.items():
-            if is_overlap(value['box'], box, threshold = 0.95):
+            if is_overlap(value['box'], box, threshold = 0.80):
                 result[key] = value
         return result
 
@@ -191,18 +209,18 @@ class Table(object):
             if label in ['table_row', 'table_column']:
                 xmins.append(int(box.xmin))
                 ymins.append(int(box.ymin))
+                xmins.append(int(box.xmax))
+                ymins.append(int(box.ymax))
 
         cols = { x : idx for idx, x in enumerate(sorted(list(set(xmins))))}
         rows = { y : idx for idx, y in enumerate(sorted(list(set(ymins))))}
-
 
         cells = []
         for box_row, label_row in self.boxes_element:
             if label_row == "table_row":
                 for box_col, label_col in self.boxes_element:
-                    if label_col == "table_col":
+                    if label_col == "table_column":
                         cells.append(Box([box_col.xmin, box_row.ymin, box_col.xmax, box_row.ymax]))
-
         idx = 0
         metadata = []
         header = []
@@ -221,7 +239,7 @@ class Table(object):
                 metadata.append(obj)
                 if len(obj.TBox.relative_id) > 0:
                     text_id = max(obj.TBox.relative_id)
-                else:
+                elif obj.TBox.id is not None:
                     text_id = obj.TBox.id
                 idx += 1
         
@@ -233,12 +251,15 @@ class Table(object):
                 metadata.append(obj)
                 if len(obj.TBox.relative_id) > 0:
                     text_id = max(obj.TBox.relative_id)
-                else:
+                elif obj.TBox.id is not None:
                     text_id = obj.TBox.id
             
             if label in ['table_column_header']:
                 re = [rows[int(box.ymin)], rows[int(box.ymax)], cols[int(box.xmin)], cols[int(box.xmax)]]
                 header.append(RelativeBox((re)))
+            
+            idx += 1
+        # print(len(metadata))
         return metadata, header
 
 
@@ -266,14 +287,14 @@ class Table(object):
                             list_header.append(cell)
                 else:
                     for cell in selected:
-                        if cell.num_row == self.header[0].num_row and cell.TBox.id is not None:
+                        if cell.RBox.num_row == self.header[0].num_row and cell.TBox.id is not None:
                             list_header.append(cell)
                         else:
                             for c in self.metadata:
-                                if c.type == 'cell' and c.RBox.row_start == cell.RBox.row_end and c.RBox.col_start >= cell.RBox.col_start and c.RBox.col_end <= cell.RBox.col_start.col_end and c.TBox.id is not None:
+                                if c.type == 'cell' and c.RBox.row_start == cell.RBox.row_end and c.RBox.col_start >= cell.RBox.col_start and c.RBox.col_end <= cell.RBox.col_end and c.TBox.id is not None:
                                     list_header.append(c)
                                     self.matrix[c.TBox.id][cell.TBox.id] = 1
-                    return list_header
+                return list_header
   
             else:
                 raise "Only supported two-one line header"
@@ -283,10 +304,10 @@ class Table(object):
     def create_link_in_row(self):
         row_end_header = 0
         if len(self.header) == 1:
-            row_end_header = self.header[0].RBox.row_end
-        
+            row_end_header = self.header[0].row_end
         for cell_1 in self.metadata:
-            if cell_1.type == 'cell' and cell_1.RBox.row_start >= row_end_header:
+            if cell_1.type == 'cell' and cell_1.RBox.row_end > row_end_header:
+            # if cell_1.type == 'cell':
                 for cell_2 in self.metadata:
                     if cell_2.type == 'cell' and cell_1.RBox.row_start == cell_2.RBox.row_start and cell_1.RBox.row_end == cell_2.RBox.row_end:
                         if cell_1.TBox.id is not None and cell_2.TBox.id is not None and cell_1.TBox.id != cell_2.TBox.id:
@@ -301,7 +322,7 @@ class Table(object):
                 for cell in self.metadata:
                     if cell.type == 'cell' and cell.RBox.col_start == header.RBox.col_start and cell.RBox.col_end == header.RBox.col_end:
                         if cell.TBox.id is not None:
-                            self.matrix[cell.TBox.id][header.Tbox.id] = 1
+                            self.matrix[cell.TBox.id][header.TBox.id] = 1
 
     
     def create_link_cell_to_project(self):
@@ -342,20 +363,31 @@ class Table(object):
         self.create_link_cell_with_header()
         self.create_link_cell_to_project()
 
-def gen_annotations(boxes_ocr, matrix):
+def gen_annotations(table):
     documents = []
-    h, w = np.shape(matrix)[:2]
-    for ocr in boxes_ocr.values():
-        # print(ocr['bbox'])
+    h, w = np.shape(table.matrix)[:2]
+    boxes_ocr = []
+    for item in table.metadata:
+        for i in item.TBox.lines.values():
+            boxes_ocr.append(
+                {
+                    'box' : Box([i['box'].xmin, i['box'].ymin, i['box'].xmax, i['box'].ymax]),
+                    'text' : i['text'],
+                    'id' : i['id']
+                }
+            )
+    # print(boxes_ocr)
+    # 1/0
+    for ocr in boxes_ocr:
         temp = {
-            "box" : [ocr['bbox'].xmin, ocr['bbox'].ymin, ocr['bbox'].xmax, ocr['bbox'].ymax],
+            "box" : [ocr['box'].xmin, ocr['box'].ymin, ocr['box'].xmax, ocr['box'].ymax],
             "text" : ocr['text'],
             "word" : [],
             "id" : ocr['id'],
             "linking" : []
         }
         for i in range(w):
-            if matrix[ocr['id']][i] == 1:
+            if table.matrix[ocr['id']][i] == 1:
                 temp['linking'].append([ocr['id'], i])
         documents.append(temp)
     return documents
@@ -378,6 +410,9 @@ def visualize(image, annotation):
     return image
 
 def run(name, idx):
+    # print(name)
+    global IDX
+    IDX = 0
     image_path = os.path.join(ROOT_IMG, name + ".jpg")
     label_path = os.path.join(ROOT_LABEL, name + ".txt")
     ocr_path = os.path.join(ROOT_OCR, name + "_words.json")
@@ -385,11 +420,9 @@ def run(name, idx):
     image = cv2.imread(image_path)
     boxes_text = read_ocr(ocr_path)
     boxes_element = read_file(label_path)
-
     table = Table(boxes_text, boxes_element)
     table.create_link()
-    1/0
-    anno = gen_annotations(boxes_text, table.matrix)
+    anno = gen_annotations(table)
     # print(anno)
 
     image = visualize(image, anno)
@@ -418,11 +451,13 @@ if __name__ == "__main__":
 
     with open("log_30_3.txt", 'w') as wr:
         for idx, name in tqdm.tqdm(enumerate(names)):
-            # try:
-            anno = run(name, idx)
-            annotations['documents'].append(anno)
-            # except Exception as err:
-            #     wr.write(f"{name}\t{err}")
+            try:
+                anno = run(name, idx)
+                annotations['documents'].append(anno)
+            # 1/0
+            except Exception as err:
+                wr.write(f"{name}\t{err}")
+                print(err)
         # 1/0
     with open("pubtable1m_entity_linking_v1.json", 'w') as f:
         json.dump(annotations, f, ensure_ascii=False)
