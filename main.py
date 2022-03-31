@@ -372,9 +372,9 @@ def gen_annotations(table, ocrs):
     h, w = np.shape(table.matrix)[:2]
     boxes_ocr = []
     for item in table.metadata:
-        label = "value"
+        label = "answer"
         if item.type != 'cell':
-            label = "header"
+            label = "question"
         for i in item.TBox.lines.values():
             boxes_ocr.append(
                 {
@@ -457,8 +457,9 @@ def run(name, idx):
     ocr_path = os.path.join(ROOT_OCR, name + "_words.json")
 
     image = cv2.imread(image_path)
-    boxes_text = read_ocr(ocr_path)
-    boxes_element = read_file(label_path)
+    boxes_element, h, w = read_file(label_path)
+    boxes_text = read_ocr(ocr_path, h, w)
+
     table = Table(boxes_text, boxes_element)
     table.create_link()
     anno = gen_annotations(table, boxes_text)
@@ -489,7 +490,7 @@ if __name__ == "__main__":
     }
 
     with open("log_30_3.txt", 'w') as wr:
-        for idx, name in tqdm.tqdm(enumerate(names[:1800])):
+        for idx, name in tqdm.tqdm(enumerate(names[1800:])):
             try:
                 anno = run(name, idx)
                 annotations['documents'].append(anno)
@@ -498,7 +499,7 @@ if __name__ == "__main__":
                 wr.write(f"{name}\t{err}")
                 print(err)
         # 1/0
-    with open("pubtable1m_entity_linking_v1_train.json", 'w') as f:
+    with open("pubtable1m_entity_linking_v1_val.json", 'w') as f:
         json.dump(annotations, f, ensure_ascii=False)
     
 

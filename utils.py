@@ -6,11 +6,15 @@ import json
 
 class Box(object):
 
-    def __init__(self, bbox : List):
-        self.xmin = bbox[0]
-        self.ymin = bbox[1]
-        self.xmax = bbox[2]
-        self.ymax = bbox[3]
+    def __init__(self, bbox : List, h : float = None, w : float = None):
+        if h is None:
+            h = float("inf")
+        if w is None:
+            w = float("inf")
+        self.xmin = max(bbox[0], 0)
+        self.ymin = max(bbox[1], 0)
+        self.xmax = min(bbox[2], w)
+        self.ymax = min(bbox[3], h)
         self.xcenter = (self.xmin + self.xmax) / 2
         self.ycenter = (self.ymin + self.ymax) / 2
 
@@ -96,7 +100,7 @@ def read_file(filename):
         wc = float(d[3]) * w_img
         hc = float(d[4]) * h_img
         result.append((Box(xywh2xyxy([xc, yc, wc, hc])), dict_label[label]))
-    return result
+    return result, h_img, w_img
 
 def getxyxy(box):
     bbox = []
@@ -108,13 +112,14 @@ def getxyxy(box):
     ymax = max(bbox[1::2])
     return [xmin, ymin, xmax, ymax]
 
-def read_ocr(filename):
+def read_ocr(filename, h_img, w_img):
     with open(filename, 'r') as f:
         data = json.load(f)
     result = {}
     for idx, d in enumerate(data):
+        print(d['bbox'])
         result[idx] = {
-            "box" : Box(bbox = d['bbox']),
+            "box" : Box(bbox = d['bbox'], h = h_img, w = w_img),
             "text" : d['text'],
             "id" : idx
         }
